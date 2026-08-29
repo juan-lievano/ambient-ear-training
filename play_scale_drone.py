@@ -29,6 +29,11 @@ The run has as many notes as it needs, spread evenly over the two beats,
 so a four-note answer comes out in eighths and a two-note one in quarters —
 the rhythm of the answer is itself a hint at how far from home you were.
 
+Questions are not confined to one octave: they reach half an octave
+past the middle register at each end, so the degree — not the register —
+is the thing being asked. The answer run stays in whichever register the
+question came from.
+
 Three scales, chosen with --scale. In major every degree walks home by
 step, down from 1-4 and up from 5-7. Both minors follow each degree's
 actual pull instead: b6 falls the semitone to 5 and then home, 5 leaps
@@ -110,6 +115,21 @@ DEFAULT_SCALE = "major"
 # turns up less often than the rest.
 DEGREE_WEIGHTS = {1: 1, 2: 3, 3: 3, 4: 3, 5: 3, 6: 3, 7: 3}
 
+# Questions reach half an octave past the middle register at each end, rather
+# than filling whole octaves either side. Below, that is the top of the octave
+# down — degrees 5 6 7, which sound 5, 3 and 1 semitones under the tonic;
+# above, it is the bottom of the octave up — degrees 1 2 3 4, up to 17
+# semitones over. Anything further out would be more than the half octave.
+OCTAVES = (-1, 0, 1)
+REGISTER_DEGREES = {-1: (5, 6, 7), 0: (1, 2, 3, 4, 5, 6, 7), 1: (1, 2, 3, 4)}
+OCTAVE_WEIGHTS = {-1: 2, 0: 3, 1: 2}
+OCTAVE_NAMES = {-1: "low", 0: "mid", 1: "high"}
+
+# The extremes still differ in how they sit against the drone, so each register
+# gets a gentle gain, applied to the question and its answer alike. Flatten
+# these to 1.0 for an untouched level everywhere.
+OCTAVE_LEVELS = {-1: 1.1, 0: 1.0, 1: 0.9}
+
 # Drone partials as harmonics of the tonic one octave below the drone core:
 # (harmonic, level, floor). Harmonic 2 and 4 are the core the key sits on, so
 # they only dip to their floor; everything else can fade away completely.
@@ -138,6 +158,26 @@ def set_tempo(bpm):
 
 
 set_tempo(DEFAULT_BPM)
+
+
+def question_pool():
+    """Every (degree, octave) a question can be, with its weight."""
+    return [((degree, octave), DEGREE_WEIGHTS[degree] * OCTAVE_WEIGHTS[octave])
+            for octave in OCTAVES for degree in REGISTER_DEGREES[octave]]
+
+
+def sounding_range(scale):
+    """Semitones of the lowest and highest note heard, question or answer.
+
+    Measured from the tonic of the middle register, which is where the melody
+    sat back when there was only one octave of it.
+    """
+    steps = SCALES[scale]["steps"]
+    heard = []
+    for (degree, octave), _ in question_pool():
+        for step in (degree,) + tuple(answer_run(scale, degree)):
+            heard.append(steps[step - 1] + 12 * octave)
+    return min(heard), max(heard)
 
 
 def midi_to_freq(midi_note):
@@ -177,16 +217,18 @@ def add_note(samples, start, freq, seconds, level=MELODY_LEVEL):
 
 
 def build_melody(scale, freqs):
-    """One buffer per scale degree: the question note, then its answer run.
+    """One buffer per question — a scale degree in one of the three octaves.
 
-    Every round of a given degree sounds identical, so the seven buffers are
+    Every round of a given question sounds identical, so the buffers are
     rendered once and then just mixed into the drone. The arrival note rings on
     into the two rest beats that close the round.
     """
     layers = {}
-    for degree in DEGREE_WEIGHTS:
+    for (degree, octave), _ in question_pool():
         buf = [0.0] * (CYCLE_SAMPLES + TAIL_SAMPLES)
-        add_note(buf, 0, freqs[degree], NOTE_BEATS * BEAT_SECONDS + 0.25)
+        level = MELODY_LEVEL * OCTAVE_LEVELS[octave]
+        add_note(buf, 0, freqs[degree, octave],
+                 NOTE_BEATS * BEAT_SECONDS + 0.25, level)
 
         run = answer_run(scale, degree)
         slot = ANSWER_BEATS * BEAT_SECONDS / len(run)
@@ -195,8 +237,8 @@ def build_melody(scale, freqs):
             # the arrival note rings on into the tail, the rest are legato
             last = n == len(run) - 1
             seconds = slot + (TAIL_BEATS * BEAT_SECONDS if last else 0.12)
-            add_note(buf, start, freqs[step], seconds)
-        layers[degree] = buf
+            add_note(buf, start, freqs[step, octave], seconds, level)
+        layers[degree, octave] = buf
     return layers
 
 
@@ -246,11 +288,11 @@ def render(path, plan, tables, lfos, layers, period):
         wf.setsampwidth(2)
         wf.setframerate(SAMPLE_RATE)
 
-        for index, degree in enumerate(plan):
+        for index, question in enumerate(plan):
             start = index * CYCLE_SAMPLES
 
             # melody: this round's layer, plus whatever the last one is still ringing
-            layer = silence if degree is None else layers[degree]
+            layer = silence if question is None else layers[question]
             melody = ([a + b for a, b in zip(layer, carry)]
                       + layer[TAIL_SAMPLES:CYCLE_SAMPLES])
             carry = layer[CYCLE_SAMPLES:]
@@ -286,16 +328,22 @@ def render(path, plan, tables, lfos, layers, period):
     print()
 
 
-def pick_degrees(count):
-    """Random degrees, never the same one twice in a row."""
-    degrees = list(DEGREE_WEIGHTS)
-    weights = [DEGREE_WEIGHTS[d] for d in degrees]
+def pick_questions(count):
+    """(degree, octave) pairs — never the same degree twice in a row.
+
+    The register is free to repeat: the same degree back to back is a dull
+    question however far apart the two are, but two low notes in a row is
+    just a low passage.
+    """
+    pool = question_pool()
+    questions = [q for q, _ in pool]
+    weights = [w for _, w in pool]
     out, previous = [], None
     for _ in range(count):
-        degree = random.choices(degrees, weights)[0]
+        degree, octave = random.choices(questions, weights)[0]
         while degree == previous:
-            degree = random.choices(degrees, weights)[0]
-        out.append(degree)
+            degree, octave = random.choices(questions, weights)[0]
+        out.append((degree, octave))
         previous = degree
     return out
 
@@ -395,21 +443,29 @@ def main():
     fundamental = SAMPLE_RATE / period
     # melody sits two octaves above the drone core, i.e. on the 8th harmonic
     steps = SCALES[scale]["steps"]
-    freqs = {d: fundamental * 8 * (2 ** (steps[d - 1] / 12.0)) for d in range(1, 9)}
+    freqs = {(d, o): fundamental * 8 * (2.0 ** o) * (2 ** (steps[d - 1] / 12.0))
+             for d in range(1, 9) for o in OCTAVES}
 
     # The session lasts the minutes asked for, whatever the tempo: the drone
     # intro and the questions are all counted against it, so a slower BPM buys
     # fewer questions rather than a longer session.
     cycles = max(1 + INTRO_CYCLES, round(minutes * 60 / CYCLE_SECONDS))
-    degrees = pick_degrees(cycles - INTRO_CYCLES)
-    plan = [None] * INTRO_CYCLES + degrees
-    rounds = len(degrees)
+    questions = pick_questions(cycles - INTRO_CYCLES)
+    plan = [None] * INTRO_CYCLES + questions
+    rounds = len(questions)
 
     tables, lfos = build_drone(period)
     layers = build_melody(scale, freqs)
 
     name = NOTE_NAMES[pitch_class]
     key_name = f"{name} {scale.replace('-', ' ')}"
+    # The middle register's tonic is this key in octave 4; name the outer
+    # edges of what actually sounds, questions and answers together.
+    def note_name(semitones):
+        midi = 60 + pitch_class + semitones
+        return f"{NOTE_NAMES[midi % 12]}{midi // 12 - 1}"
+
+    low_note, high_note = (note_name(x) for x in sounding_range(scale))
     # the run table, three degrees to a line, straight from the active scale
     runs = [f"{spell(scale, [d])} = {spell(scale, answer_run(scale, d))}"
             for d in sorted(SCALES[scale]["runs"])]
@@ -434,7 +490,10 @@ def main():
 Drone on {name}2/{name}3 with the octaves and fifths breathing in and out.
 Each round, over 6 beats:
 
-  beats 1-2   the note — which degree of the scale is it?
+  beats 1-2   the note — which degree of the scale is it? it can land
+              anywhere from {low_note} to {high_note}, half an octave past the
+              middle register either way; the answer stays in the
+              register the question was asked in
   beats 3-4   silence  — answer in your head
   beats 5-6   the run home:
               {run_table}
@@ -449,14 +508,15 @@ The answer is printed here as it plays — look away if you'd rather not see it.
         start = time.time()
 
         target = INTRO_CYCLES * CYCLE_SECONDS   # absolute schedule, so it can't drift
-        for degree in degrees:
+        for degree, octave in questions:
             if player.poll() is not None:
                 break
             count += 1
             print(f"Note #{count} ... ", end="", flush=True)
             time.sleep(max(0.0, target + ANSWER_OFFSET - (time.time() - start)))
             run = spell(scale, answer_run(scale, degree))
-            print(f"degree {spell(scale, [degree])}   ->   {run}")
+            label = spell(scale, [degree])
+            print(f"degree {label:<2} {OCTAVE_NAMES[octave]:<4}  ->   {run}")
             target += CYCLE_SECONDS
             time.sleep(max(0.0, target - (time.time() - start)))
         player.wait()

@@ -45,6 +45,17 @@ the rhythm of the answer is itself a hint at how far from home you were.
 tempo: `--bpm 50` doesn't make the session longer, it fits fewer, slower
 questions into the same minutes.
 
+### Register
+
+Questions aren't confined to one octave. They reach half an octave past
+the middle register at each end — in G, `D4` to `C6` — which is degrees
+5 6 7 of the octave below, all seven of the middle octave, and degrees
+1 2 3 4 of the octave above. The register is not the question: the same
+degree can turn up low or high and the answer is the same, so what you
+are learning is the degree itself rather than a fixed pitch. The answer
+run stays in whichever register the question came from, so a low 4 walks
+down to the low tonic.
+
 ### The three scales
 
 In **major** every degree walks home by step, down from 1-4 and up from
@@ -77,10 +88,14 @@ tone drilled.
 
 ## `play_chords.py` — chord progressions from real songs
 
+Same flag conventions as the drone drill: `--minutes`, `--genre`, `--bpm`,
+`--output`, `--help`, and a bad argument prints the full list and exits 2.
+
 ```sh
-python3 play_chords.py               # 60 minutes, all genres
-python3 play_chords.py 20 jazz       # 20 minutes of jazz standards
-python3 play_chords.py 20 random     # random chords, no songs
+python3 play_chords.py                                # 60 minutes, all genres
+python3 play_chords.py --minutes 20 --genre jazz      # jazz standards
+python3 play_chords.py --minutes 20 --genre random    # random chords, no songs
+python3 play_chords.py --genre rock --bpm 75          # take it slower
 ```
 
 Genres are the `.jsonl` files in `progressions/` (one song per line:

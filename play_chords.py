@@ -2,11 +2,12 @@
 """Ear training: chord progressions from real songs over a continuous metronome.
 
 Usage:
-    python3 play_chords.py [minutes] [genre]
+    python3 play_chords.py [--minutes N] [--genre NAME] [--bpm N]
+                           [--output FILE]
 
 Genres are the .jsonl files in the progressions/ directory next to this
 script (one song per line: {"title": ..., "key": ..., "chords": [...]}) —
-add a new genre by adding a new file. Omit the genre to mix all of them;
+add a new genre by adding a new file. Omit --genre to mix all of them;
 use "random" for random chords with no songs.
 
 Each round: the chord sounds as a block over CHORD_BEATS beats, then
@@ -40,7 +41,10 @@ import wave
 
 SAMPLE_RATE = 22050
 
-BPM = 90
+DEFAULT_BPM = 90
+MIN_BPM = 20
+MAX_BPM = 240
+DEFAULT_MINUTES = 60.0
 CHORD_BEATS = 4          # block chord rings over these beats
 ARP_BEATS = 4            # then one arpeggio note per beat
 GUESS_BEATS = 2          # click-only beats to make your guess
@@ -148,9 +152,18 @@ def parse_chord(symbol, tonic_pc=None, minor_key=False):
     return label, freqs, rhythm, answer_text, cue_freqs
 
 
-BEAT_SECONDS = 60.0 / BPM
 ROUND_BEATS = CHORD_BEATS + ARP_BEATS + GUESS_BEATS + ANSWER_BEATS
-ROUND_SECONDS = BEAT_SECONDS * ROUND_BEATS
+
+
+def set_tempo(bpm):
+    """Fix the tempo for this run: everything else is counted in beats."""
+    global BPM, BEAT_SECONDS, ROUND_SECONDS
+    BPM = bpm
+    BEAT_SECONDS = 60.0 / bpm
+    ROUND_SECONDS = BEAT_SECONDS * ROUND_BEATS
+
+
+set_tempo(DEFAULT_BPM)
 
 
 def envelope(i, n_samples):
@@ -378,29 +391,97 @@ def build_session_wav(path, events):
     print()
 
 
-def main():
-    minutes, genre = 60.0, None
-    for arg in sys.argv[1:]:
-        try:
-            minutes = float(arg)
-        except ValueError:
-            genre = arg
+def usage(genres):
+    """The flags, their defaults, and the genres actually on disk."""
+    available = " | ".join(list(genres) + ["random"]) or "random"
+    return f"""Ear training: chord progressions from real songs. Every setting is a flag:
 
+  --minutes N     how long the session runs      (default {DEFAULT_MINUTES:g})
+  --genre NAME    which progressions to draw on:
+                  {available}
+                  "random" is random chords with no songs
+                  (default: all genres mixed)
+  --bpm N         tempo, between {MIN_BPM:g} and {MAX_BPM:g}; every round is {ROUND_BEATS} beats
+                  (default {DEFAULT_BPM:g})
+  --output FILE   keep the rendered WAV at FILE instead of a temp file
+  --help          print this and stop
+
+  python3 play_chords.py --minutes 30 --genre jazz --bpm 75
+"""
+
+
+def fail(problem, genres):
+    """Say what was wrong with the arguments, then list all of them."""
+    print(f"{problem}\n")
+    print(usage(genres), end="")
+    return None
+
+
+def parse_args(argv, genres):
+    """Every argument is a named flag. Returns settings, or None to stop."""
+    settings = dict(minutes=DEFAULT_MINUTES, genre=None,
+                    bpm=DEFAULT_BPM, output=None)
+    numeric = {"--minutes": "minutes", "--bpm": "bpm"}
+    verbatim = {"--genre": "genre", "--output": "output"}
+
+    args = list(argv)
+    while args:
+        flag = args.pop(0)
+        if flag == "--help":
+            print(usage(genres), end="")
+            return None
+        if flag not in numeric and flag not in verbatim:
+            hint = "no such flag" if flag.startswith("-") else \
+                "every setting is passed as a named flag"
+            return fail(f"{flag!r}: {hint}.", genres)
+        if not args:
+            return fail(f"{flag} needs a value after it.", genres)
+        value = args.pop(0)
+        if flag in numeric:
+            try:
+                settings[numeric[flag]] = float(value)
+            except ValueError:
+                return fail(f"{flag} needs a number, not {value!r}.", genres)
+        else:
+            settings[verbatim[flag]] = value
+
+    if settings["minutes"] <= 0:
+        return fail(f"--minutes {settings['minutes']:g} is not a length; "
+                    "it needs to be positive.", genres)
+    if not MIN_BPM <= settings["bpm"] <= MAX_BPM:
+        return fail(f"--bpm {settings['bpm']:g} is out of range "
+                    f"({MIN_BPM:g} to {MAX_BPM:g}).", genres)
+    if settings["genre"] is not None and settings["genre"] not in genres \
+            and settings["genre"] != "random":
+        return fail(f"--genre {settings['genre']!r} is not a genre I have.",
+                    genres)
+    return settings
+
+
+def main():
     songs = load_songs()
+    settings = parse_args(sys.argv[1:], sorted(songs))
+    if settings is None:
+        return 2
+    minutes, genre, out_path = (settings["minutes"], settings["genre"],
+                                settings["output"])
+    set_tempo(settings["bpm"])
+
     if genre == "random" or not songs:
         events = random_events(minutes * 60)
         source = "random chords"
-    elif genre is not None and genre not in songs:
-        print(f"Unknown genre {genre!r}. Available: {', '.join(sorted(songs))}, random")
-        return
     else:
         events = song_events(songs, genre, minutes * 60)
         source = f"genre: {genre}" if genre else f"all genres ({', '.join(sorted(songs))})"
     n_rounds = sum(1 for ev in events if ev["kind"] == "round")
 
     answer_offset = BEAT_SECONDS * (CHORD_BEATS + ARP_BEATS + GUESS_BEATS)
-    tmpdir = tempfile.mkdtemp(prefix="chords_")
-    wav_path = os.path.join(tmpdir, "session.wav")
+    tmpdir = None
+    if out_path is None:
+        tmpdir = tempfile.mkdtemp(prefix="chords_")
+        wav_path = os.path.join(tmpdir, "session.wav")
+    else:
+        wav_path = out_path
     player = None
     start = time.time()
     count = 0
@@ -409,7 +490,7 @@ def main():
         build_session_wav(wav_path, events)
 
         print(f"""
-{n_rounds} exercise chords at {BPM} BPM ({source}) — Ctrl+C to stop.
+{n_rounds} exercise chords at {BPM:g} BPM ({source}) — Ctrl+C to stop.
 
 Each song: a quick preview of the whole progression ({PREVIEW_BEATS} beats
 per chord, to plant the key in your ear), then the progression loops
@@ -427,6 +508,8 @@ arpeggio, 2 beats to guess, then the ANSWER plays on the last 4 beats:
       x... = major | x.x. = minor | xx.. = dom 7 | x..x = maj 7
       x.xx = min 7 | xxx. = m7b5  | xxxx = dim 7
 """)
+        if out_path is not None:
+            print(f"Saved to {wav_path}\n")
 
         player = subprocess.Popen(["afplay", wav_path])
         start = time.time()
@@ -450,13 +533,14 @@ arpeggio, 2 beats to guess, then the ANSWER plays on the last 4 beats:
             player.terminate()
         print("\nStopped early.")
     finally:
-        if os.path.exists(wav_path):
-            os.remove(wav_path)
-        os.rmdir(tmpdir)
+        if tmpdir is not None:
+            if os.path.exists(wav_path):
+                os.remove(wav_path)
+            os.rmdir(tmpdir)
 
     elapsed = (time.time() - start) / 60
     print(f"Done — {count} chords over {elapsed:.0f} minutes.")
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
