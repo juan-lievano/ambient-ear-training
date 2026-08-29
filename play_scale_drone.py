@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
-"""Ear training: major scale degrees over a slowly breathing drone.
+"""Ear training: scale degrees over a slowly breathing drone.
 
 Usage:
-    python3 play_scale_drone.py [minutes] [tonic] [-o out.wav]
+    python3 play_scale_drone.py [--minutes N] [--key G] [--scale NAME]
+                                [--bpm N] [--output FILE]
 
-    python3 play_scale_drone.py            # 15 minutes in G
-    python3 play_scale_drone.py 30 D       # 30 minutes in D
-    python3 play_scale_drone.py 15 G -o drone.wav   # keep the render
+    python3 play_scale_drone.py                        # 15 min in G major, 80 BPM
+    python3 play_scale_drone.py --minutes 30 --key D
+    python3 play_scale_drone.py --key A --scale natural-minor
+    python3 play_scale_drone.py --key A --scale harmonic-minor --bpm 60
+    python3 play_scale_drone.py --output drone.wav     # keep the render
 
 A drone on the tonic hums underneath the whole session: the core is the
 tonic two octaves below the melody (G2) and its octave (G3), and around
@@ -15,18 +18,24 @@ fade in and out on their own very slow LFOs (35-95 second cycles, random
 phase per run), so the pad keeps moving instead of sitting there as one
 static chord.
 
-Over that, one random note of the major scale per round, at BPM:
+Over that, one random note of the scale per round, at BPM:
 
     2 beats  the NOTE      — which scale degree is it?
     2 beats  silence       — answer in your head
-    2 beats  the ANSWER    — a run from that degree to the nearest tonic,
-                             DOWN for degrees 1-4, UP for 5-7:
-                             4 -> 4 3 2 1     5 -> 5 6 7 8
+    2 beats  the ANSWER    — a run from that degree home to the tonic
     2 beats  rest          — the answer rings out over the drone
 
 The run has as many notes as it needs, spread evenly over the two beats,
-so degree 5 answers in four eighth notes and degree 7 in two quarters —
+so a four-note answer comes out in eighths and a two-note one in quarters —
 the rhythm of the answer is itself a hint at how far from home you were.
+
+Three scales, chosen with --scale. In major every degree walks home by
+step, down from 1-4 and up from 5-7. Both minors follow each degree's
+actual pull instead: b6 falls the semitone to 5 and then home, 5 leaps
+home rather than crawling down, and the 7th resolves up to the octave —
+a whole step in natural minor, a leading-tone semitone in harmonic minor.
+That raised 7th is the only note the two minors disagree about, and
+hearing which one is sounding is most of the point of having both.
 
 The whole session is rendered as one WAV up front (a few seconds) so the
 drone never breaks, then played with macOS's afplay. Standard library
@@ -46,7 +55,9 @@ import wave
 
 SAMPLE_RATE = 22050
 
-BPM = 80
+DEFAULT_BPM = 80
+MIN_BPM = 20
+MAX_BPM = 240
 NOTE_BEATS = 2           # the question note
 PAUSE_BEATS = 2          # silence to answer in your head
 ANSWER_BEATS = 2         # the resolving run
@@ -63,9 +74,37 @@ LFO_MAX_PERIOD = 95.0
 DEFAULT_MINUTES = 15.0
 DEFAULT_TONIC = "G"
 
-MAJOR_SCALE = (0, 2, 4, 5, 7, 9, 11, 12)   # degrees 1-8 in semitones
 PITCH_CLASS = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
 NOTE_NAMES = ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"]
+
+# Each scale is three parallel facts about degrees 1-8: how many semitones
+# each one sits above the tonic, what to call it on screen, and the run it
+# takes to get home. Major walks home by step in both directions; the minors
+# follow each degree's pull, so b6 drops its semitone to 5 and 5 leaps home
+# instead of crawling down through four notes.
+SCALES = {
+    "major": dict(
+        steps=(0, 2, 4, 5, 7, 9, 11, 12),
+        labels=("1", "2", "3", "4", "5", "6", "7", "8"),
+        runs={1: (1,), 2: (2, 1), 3: (3, 2, 1), 4: (4, 3, 2, 1),
+              5: (5, 6, 7, 8), 6: (6, 7, 8), 7: (7, 8)},
+    ),
+    "natural-minor": dict(
+        steps=(0, 2, 3, 5, 7, 8, 10, 12),
+        labels=("1", "2", "b3", "4", "5", "b6", "b7", "8"),
+        runs={1: (1,), 2: (2, 1), 3: (3, 2, 1), 4: (4, 3, 2, 1),
+              5: (5, 1), 6: (6, 5, 1), 7: (7, 8)},
+    ),
+    "harmonic-minor": dict(
+        steps=(0, 2, 3, 5, 7, 8, 11, 12),
+        labels=("1", "2", "b3", "4", "5", "b6", "7", "8"),
+        runs={1: (1,), 2: (2, 1), 3: (3, 2, 1), 4: (4, 3, 2, 1),
+              5: (5, 1), 6: (6, 5, 1), 7: (7, 8)},
+    ),
+}
+SCALE_ALIASES = {"minor": "natural-minor", "aeolian": "natural-minor",
+                 "ionian": "major", "harmonic": "harmonic-minor"}
+DEFAULT_SCALE = "major"
 
 # Degree 1 is the boring one (the answer is "you are already home"), so it
 # turns up less often than the rest.
@@ -84,25 +123,36 @@ PARTIALS = (
     (12, 0.07, 0.00),    # shimmer          D5
 )
 
-BEAT_SECONDS = 60.0 / BPM
 CYCLE_BEATS = NOTE_BEATS + PAUSE_BEATS + ANSWER_BEATS + REST_BEATS
-CYCLE_SECONDS = BEAT_SECONDS * CYCLE_BEATS
-CYCLE_SAMPLES = round(SAMPLE_RATE * CYCLE_SECONDS)
-TAIL_SAMPLES = round(SAMPLE_RATE * BEAT_SECONDS * TAIL_BEATS)
-ANSWER_OFFSET = BEAT_SECONDS * (NOTE_BEATS + PAUSE_BEATS)
+
+
+def set_tempo(bpm):
+    """Fix the tempo for this run: everything else is counted in beats."""
+    global BPM, BEAT_SECONDS, CYCLE_SECONDS, CYCLE_SAMPLES, TAIL_SAMPLES, ANSWER_OFFSET
+    BPM = bpm
+    BEAT_SECONDS = 60.0 / bpm
+    CYCLE_SECONDS = BEAT_SECONDS * CYCLE_BEATS
+    CYCLE_SAMPLES = round(SAMPLE_RATE * CYCLE_SECONDS)
+    TAIL_SAMPLES = round(SAMPLE_RATE * BEAT_SECONDS * TAIL_BEATS)
+    ANSWER_OFFSET = BEAT_SECONDS * (NOTE_BEATS + PAUSE_BEATS)
+
+
+set_tempo(DEFAULT_BPM)
 
 
 def midi_to_freq(midi_note):
     return 440.0 * (2.0 ** ((midi_note - 69) / 12.0))
 
 
-def answer_run(degree):
-    """The resolution: down to the tonic from 1-4, up to it from 5-7."""
-    if degree == 1:
-        return [1]
-    if degree <= 4:
-        return list(range(degree, 0, -1))
-    return list(range(degree, 9))
+def answer_run(scale, degree):
+    """The run that takes this degree home, in the active scale."""
+    return SCALES[scale]["runs"][degree]
+
+
+def spell(scale, degrees):
+    """Degree numbers as they are printed: 4 3 2 1, or b6 5 1."""
+    labels = SCALES[scale]["labels"]
+    return " ".join(labels[d - 1] for d in degrees)
 
 
 def tone(t, f):
@@ -126,7 +176,7 @@ def add_note(samples, start, freq, seconds, level=MELODY_LEVEL):
         samples[start + i] += level * env * tone(t, freq) / 1.4
 
 
-def build_melody(freqs):
+def build_melody(scale, freqs):
     """One buffer per scale degree: the question note, then its answer run.
 
     Every round of a given degree sounds identical, so the seven buffers are
@@ -138,7 +188,7 @@ def build_melody(freqs):
         buf = [0.0] * (CYCLE_SAMPLES + TAIL_SAMPLES)
         add_note(buf, 0, freqs[degree], NOTE_BEATS * BEAT_SECONDS + 0.25)
 
-        run = answer_run(degree)
+        run = answer_run(scale, degree)
         slot = ANSWER_BEATS * BEAT_SECONDS / len(run)
         for n, step in enumerate(run):
             start = int(SAMPLE_RATE * (ANSWER_OFFSET + n * slot))
@@ -250,28 +300,93 @@ def pick_degrees(count):
     return out
 
 
-def main():
-    minutes, tonic, out_path = DEFAULT_MINUTES, DEFAULT_TONIC, None
-    args = sys.argv[1:]
-    while args:
-        arg = args.pop(0)
-        if arg in ("-o", "--save"):
-            if not args:
-                print("-o needs a path")
-                return
-            out_path = args.pop(0)
-            continue
-        try:
-            minutes = float(arg)
-        except ValueError:
-            tonic = arg
+USAGE = f"""Ear training: scale degrees over a drone. Every setting is a flag:
 
-    key = tonic.strip().capitalize().replace("s", "#")
+  --minutes N     how long the whole session lasts, intro included; a
+                  slower tempo buys fewer questions, not more minutes
+                  (default {DEFAULT_MINUTES:g})
+  --key NOTE      the tonic the drone sits on: C D E F G A B, each
+                  optionally with # or b  (default {DEFAULT_TONIC})
+  --scale NAME    which scale the degrees come from:
+                  {" | ".join(SCALES)}
+                  (default {DEFAULT_SCALE})
+  --bpm N         tempo, between {MIN_BPM:g} and {MAX_BPM:g}; every round is 8 beats
+                  (default {DEFAULT_BPM:g})
+  --output FILE   keep the rendered WAV at FILE instead of a temp file
+  --help          print this and stop
+
+  python3 play_scale_drone.py --minutes 20 --key A --scale natural-minor
+"""
+
+
+def fail(problem):
+    """Say what was wrong with the arguments, then list all of them."""
+    print(f"{problem}\n")
+    print(USAGE, end="")
+    return None
+
+
+def parse_args(argv):
+    """Every argument is a named flag. Returns settings, or None to stop."""
+    settings = dict(minutes=DEFAULT_MINUTES, key=DEFAULT_TONIC,
+                    scale=DEFAULT_SCALE, bpm=DEFAULT_BPM, output=None)
+    numeric = {"--minutes": "minutes", "--bpm": "bpm"}
+    verbatim = {"--key": "key", "--scale": "scale", "--output": "output"}
+
+    args = list(argv)
+    while args:
+        flag = args.pop(0)
+        if flag == "--help":
+            print(USAGE, end="")
+            return None
+        if flag not in numeric and flag not in verbatim:
+            hint = "every setting is passed as a named flag"
+            if flag.startswith("-"):
+                hint = "no such flag"
+            return fail(f"{flag!r}: {hint}.")
+        if not args:
+            return fail(f"{flag} needs a value after it.")
+        value = args.pop(0)
+        if flag in numeric:
+            try:
+                settings[numeric[flag]] = float(value)
+            except ValueError:
+                return fail(f"{flag} needs a number, not {value!r}.")
+        else:
+            settings[verbatim[flag]] = value
+
+    if settings["minutes"] <= 0:
+        return fail(f"--minutes {settings['minutes']:g} is not a length; "
+                    "it needs to be positive.")
+    if not MIN_BPM <= settings["bpm"] <= MAX_BPM:
+        return fail(f"--bpm {settings['bpm']:g} is out of range "
+                    f"({MIN_BPM:g} to {MAX_BPM:g}).")
+
+    name = settings["scale"].strip().lower().replace("_", "-").replace(" ", "-")
+    name = SCALE_ALIASES.get(name, name)
+    if name not in SCALES:
+        return fail(f"--scale {settings['scale']!r} is not a scale I know.")
+    settings["scale"] = name
+
+    # The key is validated here too, so that every bad argument comes back
+    # the same way: the problem, then the full list of what is accepted.
+    key = settings["key"].strip().capitalize().replace("s", "#")
     root, accidental = key[:1], key[1:]
     if root not in PITCH_CLASS or accidental not in ("", "#", "b"):
-        print(f"Unknown tonic {tonic!r}. Try one of C D E F G A B, optionally with # or b.")
-        return
-    pitch_class = (PITCH_CLASS[root] + (1 if accidental == "#" else -1 if accidental == "b" else 0)) % 12
+        return fail(f"--key {settings['key']!r} is not a note name.")
+    settings["pitch_class"] = (PITCH_CLASS[root]
+                               + (1 if accidental == "#" else -1 if accidental == "b" else 0)) % 12
+    return settings
+
+
+def main():
+    settings = parse_args(sys.argv[1:])
+    if settings is None:
+        return 2
+    minutes, scale, bpm, out_path = (settings["minutes"], settings["scale"],
+                                     settings["bpm"], settings["output"])
+    pitch_class = settings["pitch_class"]
+    set_tempo(bpm)
 
     # The drone's fundamental is the tonic in octave 1; rounding its period to a
     # whole number of samples (under two cents) lets one cycle of each partial be
@@ -279,16 +394,27 @@ def main():
     period = max(2, round(SAMPLE_RATE / midi_to_freq(24 + pitch_class)))
     fundamental = SAMPLE_RATE / period
     # melody sits two octaves above the drone core, i.e. on the 8th harmonic
-    freqs = {d: fundamental * 8 * (2 ** (MAJOR_SCALE[d - 1] / 12.0)) for d in range(1, 9)}
+    steps = SCALES[scale]["steps"]
+    freqs = {d: fundamental * 8 * (2 ** (steps[d - 1] / 12.0)) for d in range(1, 9)}
 
-    rounds = max(1, int(minutes * 60 / CYCLE_SECONDS))
-    degrees = pick_degrees(rounds)
+    # The session lasts the minutes asked for, whatever the tempo: the drone
+    # intro and the questions are all counted against it, so a slower BPM buys
+    # fewer questions rather than a longer session.
+    cycles = max(1 + INTRO_CYCLES, round(minutes * 60 / CYCLE_SECONDS))
+    degrees = pick_degrees(cycles - INTRO_CYCLES)
     plan = [None] * INTRO_CYCLES + degrees
+    rounds = len(degrees)
 
     tables, lfos = build_drone(period)
-    layers = build_melody(freqs)
+    layers = build_melody(scale, freqs)
 
     name = NOTE_NAMES[pitch_class]
+    key_name = f"{name} {scale.replace('-', ' ')}"
+    # the run table, three degrees to a line, straight from the active scale
+    runs = [f"{spell(scale, [d])} = {spell(scale, answer_run(scale, d))}"
+            for d in sorted(SCALES[scale]["runs"])]
+    run_table = "\n".join("              " + " | ".join(runs[i:i + 3])
+                          for i in range(0, len(runs), 3)).strip()
     tmpdir = None
     if out_path is None:
         tmpdir = tempfile.mkdtemp(prefix="drone_")
@@ -303,16 +429,15 @@ def main():
         render(wav_path, plan, tables, lfos, layers, period)
 
         print(f"""
-{rounds} notes in {name} major at {BPM} BPM, {rounds * CYCLE_SECONDS / 60:.0f} minutes — Ctrl+C to stop.
+{rounds} notes in {key_name} at {BPM:g} BPM, {len(plan) * CYCLE_SECONDS / 60:.0f} minutes — Ctrl+C to stop.
 
 Drone on {name}2/{name}3 with the octaves and fifths breathing in and out.
 Each round, over 6 beats:
 
   beats 1-2   the note — which degree of the scale is it?
   beats 3-4   silence  — answer in your head
-  beats 5-6   the run home: 1-4 resolve DOWN, 5-7 resolve UP
-              1 = 1 | 2 = 2 1 | 3 = 3 2 1 | 4 = 4 3 2 1
-              5 = 5 6 7 8 | 6 = 6 7 8 | 7 = 7 8
+  beats 5-6   the run home:
+              {run_table}
   beats 7-8   rest — the tonic rings out over the drone
 
 The answer is printed here as it plays — look away if you'd rather not see it.
@@ -330,8 +455,8 @@ The answer is printed here as it plays — look away if you'd rather not see it.
             count += 1
             print(f"Note #{count} ... ", end="", flush=True)
             time.sleep(max(0.0, target + ANSWER_OFFSET - (time.time() - start)))
-            run = " ".join(str(d) for d in answer_run(degree))
-            print(f"degree {degree}   ->   {run}")
+            run = spell(scale, answer_run(scale, degree))
+            print(f"degree {spell(scale, [degree])}   ->   {run}")
             target += CYCLE_SECONDS
             time.sleep(max(0.0, target - (time.time() - start)))
         player.wait()
@@ -354,4 +479,4 @@ The answer is printed here as it plays — look away if you'd rather not see it.
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
