@@ -6,7 +6,7 @@ Usage:
                                   [--bpm N] [--lowest-octave N]
                                   [--highest-octave N] [--output FILE]
 
-    python3 play_ambient_drone.py                       # 30 min, random chord
+    python3 play_ambient_drone.py                       # 90 min, random chord
     python3 play_ambient_drone.py --minutes 60
     python3 play_ambient_drone.py --key A --chord min7
     python3 play_ambient_drone.py --bpm 10              # even slower breathing
@@ -72,7 +72,7 @@ from itertools import cycle, islice, product
 
 SAMPLE_RATE = 22050
 
-DEFAULT_MINUTES = 30.0
+DEFAULT_MINUTES = 90.0
 DEFAULT_BPM = 16
 MIN_BPM = 6
 MAX_BPM = 60

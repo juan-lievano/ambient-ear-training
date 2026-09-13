@@ -115,7 +115,7 @@ music:
 ## `play_ambient_drone.py` — one seventh chord, nothing to answer
 
 ```sh
-python3 play_ambient_drone.py                          # 30 min, random chord
+python3 play_ambient_drone.py                          # 90 min, random chord
 python3 play_ambient_drone.py --minutes 60
 python3 play_ambient_drone.py --key A --chord min7
 python3 play_ambient_drone.py --bpm 10                 # slower still
