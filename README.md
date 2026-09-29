@@ -177,6 +177,29 @@ tones to actually sound soft rather than merely measure soft. They also
 lose their harmonics on the way up, thinning towards a plain sine, so
 nothing up there pushes to the front.
 
+## `play_solfege_samples.py` — sound check for the sung samples
+
+```sh
+python3 play_solfege_samples.py                    # every voice, ~3.5 min
+python3 play_solfege_samples.py --voice jennifer
+python3 play_solfege_samples.py --output check.wav # keep the render
+```
+
+Not a drill: it plays the sung solfege samples so you can hear what each
+voice is like before building anything on them. Each of the four voices
+(`daisy`, `jennifer`, `chengu`, `katy`) sings the C major scale up and
+down at 60, 120 and 240 BPM, arpeggios on I, IV, V and I, and — all but
+Katy, who only recorded the major scale — the chromatic scale.
+
+The samples are not in this repo (72 MB, git-ignored). They are the note
+folders of [wcgbg/solfege-samples](https://github.com/wcgbg/solfege-samples),
+`samples/*/notes*`, copied into `solfege_samples/`. They are fixed-do —
+every "do" is a C.
+
+Each sample is laid with its vowel on the beat and its consonant ahead of
+it, and the note before fades out underneath as the vowel arrives, so the
+notes overlap rather than being cut apart.
+
 ## Notes
 
 Playback is macOS-only (`afplay`); the rendering is plain Python and works
