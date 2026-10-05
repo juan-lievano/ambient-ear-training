@@ -200,6 +200,87 @@ Each sample is laid with its vowel on the beat and its consonant ahead of
 it, and the note before fades out underneath as the vowel arrives, so the
 notes overlap rather than being cut apart.
 
+## `play_metronome.py` — a click on every beat
+
+```sh
+python3 play_metronome.py                        # 10 min at 80 BPM
+python3 play_metronome.py --minutes 5 --bpm 120
+python3 play_metronome.py --drone                # the same, over a C drone
+python3 play_metronome.py --drone-harmonics 16   # a brighter drone
+```
+
+Four flags: `--minutes`, `--bpm` (20 to 400), `--drone` and
+`--drone-harmonics`. The session
+is rendered up front like everything else here, with each click placed at
+its own beat's sample counted from the start, so rounding never
+accumulates and the tempo can't drift.
+
+`--drone` puts the first five harmonics of C2 underneath — C2 C3 G3 C4
+E4. Harmonic *h* sits at 1/*h* of the fundamental's level on
+average, and each one swells to 1.7 times that and sinks to 0.3 of it on
+its own sine, one to three minutes a cycle, with speed and phase drawn
+fresh every run. `DRONE_BREATH`, `DRONE_MIN_PERIOD` and `DRONE_MAX_PERIOD`
+in the script are the levers.
+
+`--drone-harmonics N` (1 to 64, default 5) changes how many harmonics
+there are, and turns the drone on by itself. 6 to 8 are G4, a flat B♭4 and
+C5, which leans it towards C7; past the eighth they stop spelling a chord
+and start filling in a scale — 9 to 16 are D E F♯ G A♭ B♭ B C, the 11th
+and 13th a good way off any piano key — each quieter than the last, so
+more of them means a brighter drone and, as they breathe, single overtones
+surfacing and going under again.
+
+## `play_blues.py` — a 12-bar blues to play over
+
+```sh
+python3 play_blues.py                         # 10 min in C at 100 BPM:
+                                              # a walking bass, nothing else
+python3 play_blues.py --minutes 20 --bpm 80
+python3 play_blues.py --key A --chords        # the chords over the bass
+python3 play_blues.py --bass drone            # no chords, a sliding drone
+python3 play_blues.py --metronome             # with a click on every beat
+```
+
+Flags: `--minutes`, `--bpm` (30 to 240), `--key`, `--bass`, `--chords`
+and `--metronome` — every run opens with a one-line reminder of them, so
+you don't have to remember. The form is the plain one, every chord a dominant seventh,
+with the V in bar 12 turning each chorus round into the next. It is
+printed as a table before the music starts, and a line under it follows
+along with the chorus and bar you are in:
+
+```
+┌──────┬──────┬──────┬──────┐
+│ I    │ I    │ I    │ I    │
+├──────┼──────┼──────┼──────┤
+│ IV   │ IV   │ I    │ I    │
+├──────┼──────┼──────┼──────┤
+│ V    │ IV   │ I    │ V    │
+└──────┴──────┴──────┴──────┘
+```
+
+By default the bass is all there is to hear the form by:
+
+- `--bass walking` (the default) plays the
+  [boogie-woogie line](https://www.studybass.com/lessons/blues-bass/the-boogie-woogie-blues-pattern/)
+  in quarter notes: 1 3 5 6 up through one bar and ♭7 6 5 3 back down
+  through the next wherever a chord lasts two bars, and just the way up on
+  the one-bar chords of the last line.
+- `--bass drone` holds the root of the chord, one unbroken note for as
+  long as the chord lasts.
+
+`--chords` puts the chords in over the bass, each bar the chord struck once
+and left to ring. Without them the drone never stops: it holds each root to the end of
+its last bar and slides into the next one over the final 0.15 seconds (a
+quarter of a beat at fast tempos), landing on the downbeat — so bars 1 to
+4 are one unbroken note and every chord change is a glide. A very faint
+click on every beat goes with it, to keep your place in a bar where
+nothing else moves. The walking bass on its own already plays every beat,
+so it gets no click.
+
+Otherwise there is no click unless you pass `--metronome`. `--minutes` is
+filled with as many whole choruses as fit (never fewer than one), and
+after the last one the turnaround resolves to a final I that rings out.
+
 ## Notes
 
 Playback is macOS-only (`afplay`); the rendering is plain Python and works
