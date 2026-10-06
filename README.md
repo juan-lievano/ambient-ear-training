@@ -260,16 +260,36 @@ along with the chorus and bar you are in:
 
 By default the bass is all there is to hear the form by:
 
-- `--bass walking` (the default) plays the
+- `--bass walking` (the default) plays a
   [boogie-woogie line](https://www.studybass.com/lessons/blues-bass/the-boogie-woogie-blues-pattern/)
-  in quarter notes: 1 3 5 6 up through one bar and ♭7 6 5 3 back down
-  through the next wherever a chord lasts two bars, and just the way up on
-  the one-bar chords of the last line.
+  in quarter notes: mostly 1 3 5 6 up through one bar and ♭7 6 5 3 back
+  down through the next wherever a chord lasts two bars. The line is drawn
+  afresh for every chorus, so that once in a long while a bar goes
+  1 3 5 ♭7, or 1 5 6 ♭7, or comes down 8 ♭7 6 5, and no two choruses are
+  quite the same. `WALK_UP` and `WALK_DOWN` in the script set the
+  vocabulary and the odds; `APPROACH_CHANCE` and `EIGHTHS_CHANCE`, both
+  off, add a chromatic approach to the next root and an eighth-note
+  passing pair.
 - `--bass drone` holds the root of the chord, one unbroken note for as
   long as the chord lasts.
 
 `--chords` puts the chords in over the bass, each bar the chord struck once
-and left to ring. Without them the drone never stops: it holds each root to the end of
+and left to ring.
+
+Nothing is struck at quite the same level twice. Beat 1 is the strongest,
+3 a little behind it, 2 and 4 lighter; bar 1 of the form is leaned on, and
+so, less, is any bar where the chord changes; whole bars come out a little
+softer or firmer than written; every note is nudged a few percent either
+way on top, and lands a few milliseconds early or late. Softer notes are
+also rounder, their overtones weaker and their attack slower, the way a
+gentler pluck is, and each overtone comes out a little stronger or weaker
+than last time regardless, so the touch varies from pluck to pluck. A
+handful of choruses are played out this way, each with its own line, and
+shuffled through the session, so it never quite repeats. `BEAT_ACCENTS`,
+`TOP_ACCENT`, `CHANGE_ACCENT`, `BAR_JITTER`, `JITTER`, `TIMING`, `TOUCH`,
+`SOFT_COLOUR` and `VARIANTS` in the script are the levers.
+
+Without the chords the drone never stops: it holds each root to the end of
 its last bar and slides into the next one over the final 0.15 seconds (a
 quarter of a beat at fast tempos), landing on the downbeat — so bars 1 to
 4 are one unbroken note and every chord change is a glide. A very faint
