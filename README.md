@@ -239,10 +239,11 @@ python3 play_blues.py --minutes 20 --bpm 80
 python3 play_blues.py --key A --chords        # the chords over the bass
 python3 play_blues.py --bass drone            # no chords, a sliding drone
 python3 play_blues.py --metronome             # with a click on every beat
+python3 play_blues.py --plain                 # the machine version
 ```
 
-Flags: `--minutes`, `--bpm` (30 to 240), `--key`, `--bass`, `--chords`
-and `--metronome` — every run opens with a one-line reminder of them, so
+Flags: `--minutes`, `--bpm` (30 to 240), `--key`, `--bass`, `--chords`,
+`--metronome` and `--plain` — every run opens with a one-line reminder of them, so
 you don't have to remember. The form is the plain one, every chord a dominant seventh,
 with the V in bar 12 turning each chorus round into the next. It is
 printed as a table before the music starts, and a line under it follows
@@ -287,7 +288,11 @@ than last time regardless, so the touch varies from pluck to pluck. A
 handful of choruses are played out this way, each with its own line, and
 shuffled through the session, so it never quite repeats. `BEAT_ACCENTS`,
 `TOP_ACCENT`, `CHANGE_ACCENT`, `BAR_JITTER`, `JITTER`, `TIMING`, `TOUCH`,
-`SOFT_COLOUR` and `VARIANTS` in the script are the levers.
+`SOFT_COLOUR` and `VARIANTS` in the script are the levers. `--plain`
+switches all of it off: the standard line in every bar, every note struck
+alike and dead on the beat, one chorus looped, and a tone whose overtones
+hold their balance as the note dies — the way it was first written, which
+has a charm of its own.
 
 Without the chords the drone never stops: it holds each root to the end of
 its last bar and slides into the next one over the final 0.15 seconds (a

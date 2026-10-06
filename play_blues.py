@@ -4,7 +4,7 @@
 Usage:
     python3 play_blues.py [--minutes N] [--bpm N] [--key NOTE]
                           [--bass walking|drone] [--chords]
-                          [--metronome]
+                          [--metronome] [--plain]
 
     python3 play_blues.py                        # 10 min in C at 100 BPM:
                                                  # a walking bass, nothing else
@@ -12,6 +12,7 @@ Usage:
     python3 play_blues.py --key A --chords       # the chords over the bass
     python3 play_blues.py --bass drone           # no chords, a sliding drone
     python3 play_blues.py --metronome            # with a click on every beat
+    python3 play_blues.py --plain                # the machine version
 
 The form is the plain one, every chord a dominant seventh, with the V in
 bar 12 turning each chorus round into the next:
@@ -47,6 +48,10 @@ the way a gentler pluck is, and every overtone is a little stronger or
 weaker than last time regardless, so the touch varies from pluck to
 pluck. A handful of choruses are played out this way, each with its own
 line, and shuffled through the session, so it never quite repeats.
+--plain switches all of that off: the standard line in every bar, every
+note struck alike and dead on the beat, one chorus looped, and a tone
+whose overtones hold their balance as the note dies — the way it was
+first written, which has a charm of its own.
 
 Without them the drone never stops: it holds each root to the end of
 its last bar and slides, quickly, into the next one, arriving on the
@@ -170,14 +175,14 @@ def midi_to_freq(midi_note):
 
 
 @functools.lru_cache(maxsize=None)
-def partial_samples(midi_note, harmonic, n, decay, release):
+def partial_samples(midi_note, harmonic, n, decay, release, brightness):
     """One harmonic of one note at unit level, dying away over `n` samples.
 
     The decay is measured against the note's own length rather than in
     seconds, so a bar sounds the same shape at any tempo; a decay of zero
     is a held note. It is the fundamental's decay: each overtone's is a
-    little faster (see HARMONICS), carried along by multiplying the level
-    down a notch every sample. The last few milliseconds are faded so the
+    little faster (`brightness`, normally BRIGHTNESS_DECAY), carried along
+    by multiplying the level down a notch every sample. The last few milliseconds are faded so the
     note ends at silence — which is what lets the chorus be laid end to
     end with itself without a step at the join.
 
@@ -187,7 +192,7 @@ def partial_samples(midi_note, harmonic, n, decay, release):
     """
     step = 2 * math.pi * midi_to_freq(midi_note) * harmonic / SAMPLE_RATE
     release *= SAMPLE_RATE
-    fade = math.exp(-decay * (1 + BRIGHTNESS_DECAY * (harmonic - 1)) / n)
+    fade = math.exp(-decay * (1 + brightness * (harmonic - 1)) / n)
     out, level = [], 1.0
     for i in range(n):
         out.append(min(1.0, (n - i) / release) * level * math.sin(step * i))
@@ -196,11 +201,12 @@ def partial_samples(midi_note, harmonic, n, decay, release):
 
 
 def add_note(samples, start, midi_note, length, level, decay,
-             attack=0.008, release=0.03, touch=None):
+             attack=ATTACK, release=0.03, touch=None, brightness=BRIGHTNESS_DECAY):
     """A note mixed in at `start` at `level`, dying away over `length` samples.
 
     `touch` is a multiplier per overtone, from the second harmonic up, for
     this strike's colour; without it the note is HARMONICS as written.
+    `brightness` is how much faster than the fundamental the overtones die.
     """
     n = min(length, len(samples) - start)
     ramp = min(n, round(attack * SAMPLE_RATE))
@@ -208,7 +214,8 @@ def add_note(samples, start, midi_note, length, level, decay,
         gain = level * weight / HARMONICS_PEAK
         if touch and index:
             gain *= touch[index - 1]
-        part = [gain * v for v in partial_samples(midi_note, harmonic, n, decay, release)]
+        part = [gain * v for v in partial_samples(midi_note, harmonic, n, decay,
+                                                  release, brightness)]
         for i in range(ramp):
             part[i] *= i / ramp
         samples[start:start + n] = map(operator.add, samples[start:start + n], part)
@@ -286,13 +293,14 @@ def weighted_choice(rng, weights):
     return rng.choices(list(weights), weights=list(weights.values()))[0]
 
 
-def walking_line(tonic, rng):
+def walking_line(tonic, rng, plain=False):
     """One chorus of walking bass, as (bar, beat, beats long, MIDI note).
 
     Each bar is drawn from WALK_UP or WALK_DOWN; then, sometimes, the last
     beat before a chord change becomes a chromatic approach to the next
     root, and a beat in the middle of a bar is split into two eighths with
-    a passing note a half step short of the beat after.
+    a passing note a half step short of the beat after. `plain` is the
+    first pattern of each table in every bar and none of that.
     """
     runs = chord_runs()
     notes = []
@@ -300,12 +308,13 @@ def walking_line(tonic, rng):
         root = chord_roots(tonic, numeral)[1]
         next_root = chord_roots(tonic, runs[(index + 1) % len(runs)][0])[1]
         for bar in range(bars):
-            pattern = weighted_choice(rng, WALK_DOWN if bar % 2 else WALK_UP)
+            table = WALK_DOWN if bar % 2 else WALK_UP
+            pattern = next(iter(table)) if plain else weighted_choice(rng, table)
             pitches = [root + interval for interval in pattern]
-            if bar == bars - 1 and rng.random() < APPROACH_CHANCE:
+            if not plain and bar == bars - 1 and rng.random() < APPROACH_CHANCE:
                 pitches[-1] = next_root + rng.choice((-1, 1))
             split = (rng.randrange(1, BEATS_PER_BAR - 1)
-                     if rng.random() < EIGHTHS_CHANCE else None)
+                     if not plain and rng.random() < EIGHTHS_CHANCE else None)
             for beat, pitch in enumerate(pitches):
                 following = pitches[beat + 1] if beat + 1 < len(pitches) else None
                 if beat == split and following is not None and abs(following - pitch) > 1:
@@ -324,20 +333,27 @@ def bar_accents():
             for bar in range(len(PROGRESSION))]
 
 
-def synth_chorus(tonic, beat_samples, bass, bass_only, click_level, rng):
+def synth_chorus(tonic, beat_samples, bass, bass_only, click_level, rng, plain):
     """One pass through the form: chords, the bass, and clicks if asked for.
 
     Every struck note is played at its own level: the accent of its beat
-    and bar, wobbled by `rng`. The sliding drone is not here; it is laid
-    over the finished chorus by synth_session.
+    and bar, wobbled by `rng`. `plain` is none of that: every note the
+    same, exactly on the beat, with an unchanging tone. The sliding drone
+    is not here; it is laid over the finished chorus by synth_session.
     """
     bar_samples = round(BEATS_PER_BAR * beat_samples)
     samples = [0.0] * (len(PROGRESSION) * bar_samples)
-    bar_levels = [accent * (1 + rng.uniform(-BAR_JITTER, BAR_JITTER))
+    bar_levels = [1.0 if plain else accent * (1 + rng.uniform(-BAR_JITTER, BAR_JITTER))
                   for accent in bar_accents()]
+
+    def wobble():
+        return 1.0 if plain else 1 + rng.uniform(-JITTER, JITTER)
 
     def strike(start, midi_note, length, level, dynamic, decay):
         """A note at `level` whose colour and attack follow `dynamic`."""
+        if plain:
+            add_note(samples, start, midi_note, length, level, decay, brightness=0.0)
+            return
         touch = [(1 + rng.uniform(-TOUCH, TOUCH)) * dynamic ** (SOFT_COLOUR * (h - 1))
                  for h, _ in HARMONICS[1:]]
         start = max(0, start + round(rng.uniform(-TIMING, TIMING) * SAMPLE_RATE))
@@ -346,7 +362,7 @@ def synth_chorus(tonic, beat_samples, bass, bass_only, click_level, rng):
 
     if not bass_only:
         for bar, numeral in enumerate(PROGRESSION):
-            dynamic = bar_levels[bar] * (1 + rng.uniform(-JITTER, JITTER))
+            dynamic = bar_levels[bar] * wobble()
             for interval in CHORD:
                 strike(bar * bar_samples, chord_roots(tonic, numeral)[0] + interval,
                        bar_samples, CHORD_LEVEL / len(CHORD), dynamic, CHORD_DECAY)
@@ -358,12 +374,12 @@ def synth_chorus(tonic, beat_samples, bass, bass_only, click_level, rng):
                          bars * bar_samples, DRONE_LEVEL, 0.0,
                          attack=DRONE_FADE, release=DRONE_FADE)
     else:
-        for bar, beat, beats, midi_note in walking_line(tonic, rng):
-            accent = BEAT_ACCENTS[int(beat)] * (OFFBEAT_ACCENT if beat % 1 else 1)
+        for bar, beat, beats, midi_note in walking_line(tonic, rng, plain):
+            accent = 1.0 if plain else (BEAT_ACCENTS[int(beat)]
+                                        * (OFFBEAT_ACCENT if beat % 1 else 1))
             strike(bar * bar_samples + round(beat * beat_samples), midi_note,
                    round(beats * beat_samples), BASS_LEVEL,
-                   accent * bar_levels[bar] * (1 + rng.uniform(-JITTER, JITTER)),
-                   BASS_DECAY)
+                   accent * bar_levels[bar] * wobble(), BASS_DECAY)
 
     if click_level:
         for bar in range(len(PROGRESSION)):
@@ -373,21 +389,23 @@ def synth_chorus(tonic, beat_samples, bass, bass_only, click_level, rng):
     return samples
 
 
-def synth_session(tonic, beat_samples, bass, bass_only, click_level, choruses):
+def synth_session(tonic, beat_samples, bass, bass_only, click_level, choruses,
+                  plain=False):
     """Every chorus of the session, as (opening, variants, order).
 
-    `variants` are differently played choruses, packed; `order` says which
-    is played when, never the same one twice running. `opening` stands in
-    for the first: it differs only when the bass is the sliding drone,
-    which has no beginning of its own, so the first time through it fades
-    in.
+    `variants` are differently played choruses, packed (`plain` has just
+    the one); `order` says which is played when, never the same one twice
+    running. `opening` stands in for the first: it differs only when the
+    bass is the sliding drone, which has no beginning of its own, so the
+    first time through it fades in.
     """
     rng = random.Random()
-    variants = [synth_chorus(tonic, beat_samples, bass, bass_only, click_level, rng)
-                for _ in range(min(VARIANTS, choruses))]
+    variants = [synth_chorus(tonic, beat_samples, bass, bass_only, click_level, rng, plain)
+                for _ in range(1 if plain else min(VARIANTS, choruses))]
     order = []
     for _ in range(choruses):
-        choices = [i for i in range(len(variants)) if not order or i != order[-1]]
+        choices = [i for i in range(len(variants))
+                   if len(variants) == 1 or not order or i != order[-1]]
         order.append(rng.choice(choices))
 
     if not (bass == "drone" and bass_only):
@@ -402,7 +420,7 @@ def synth_session(tonic, beat_samples, bass, bass_only, click_level, choruses):
     return opening + variants[order[0]][len(opening):], variants, order
 
 
-def synth_ending(tonic, beat_samples, bass, bass_only):
+def synth_ending(tonic, beat_samples, bass, bass_only, plain=False):
     """The final I: chord and bass root struck together and left to ring.
 
     With the bass on its own there is no chord, and if that bass is the
@@ -412,15 +430,17 @@ def synth_ending(tonic, beat_samples, bass, bass_only):
     chord_root, bass_root = chord_roots(tonic, "I")
     n = round(ENDING_BARS * BEATS_PER_BAR * beat_samples)
     samples = [0.0] * n
+    brightness = 0.0 if plain else BRIGHTNESS_DECAY
     if not bass_only:
         for interval in CHORD:
             add_note(samples, 0, chord_root + interval, n,
-                     CHORD_LEVEL / len(CHORD), ENDING_DECAY)
+                     CHORD_LEVEL / len(CHORD), ENDING_DECAY, brightness=brightness)
     if bass == "drone" and bass_only:
         add_note(samples, 0, bass_root, n, SOLO_DRONE_LEVEL, ENDING_DECAY,
-                 attack=1.0 / SAMPLE_RATE)
+                 attack=1.0 / SAMPLE_RATE, brightness=brightness)
     else:
-        add_note(samples, 0, bass_root, n, BASS_LEVEL, ENDING_DECAY)
+        add_note(samples, 0, bass_root, n, BASS_LEVEL, ENDING_DECAY,
+                 brightness=brightness)
     return pack_frames(samples)
 
 
@@ -471,6 +491,12 @@ USAGE = f"""A standard 12-bar blues to play over. Every setting is a flag:
                 the beats; the walking bass needs none and gets none
                 (default: the bass on its own)
   --metronome   add a click on every beat  (default: no click)
+  --plain       the machine version: 1 3 5 6 b7 6 5 3 in every bar, every
+                note struck alike and dead on the beat, the same chorus
+                over and over, and a steady tone  (default: played with
+                a human touch — accents, bars that lean, notes that
+                wobble a little in level, timing and colour, and the
+                odd different bar)
   --help        print this and stop
 
   python3 play_blues.py --minutes 20 --bpm 80 --key A --chords
@@ -478,7 +504,7 @@ USAGE = f"""A standard 12-bar blues to play over. Every setting is a flag:
 
 
 GUIDE = (f"flags: --minutes N   --bpm N   --key NOTE   --bass {'|'.join(BASS_STYLES)}   "
-         "--chords   --metronome   --help")
+         "--chords   --metronome   --plain   --help")
 
 
 def fail(problem):
@@ -491,8 +517,9 @@ def fail(problem):
 def parse_args(argv):
     """Every argument is a named flag. Returns settings, or None to stop."""
     settings = dict(minutes=DEFAULT_MINUTES, bpm=DEFAULT_BPM, key=DEFAULT_KEY,
-                    bass=BASS_STYLES[0], chords=False, metronome=False)
-    switches = {"--chords": "chords", "--metronome": "metronome"}
+                    bass=BASS_STYLES[0], chords=False, metronome=False,
+                    plain=False)
+    switches = {"--chords": "chords", "--metronome": "metronome", "--plain": "plain"}
     numeric = {"--minutes": "minutes", "--bpm": "bpm"}
     verbatim = {"--key": "key", "--bass": "bass"}
 
@@ -546,7 +573,7 @@ def main():
         return 2
     minutes, bpm, tonic = settings["minutes"], settings["bpm"], settings["tonic"]
     bass, bass_only = settings["bass"], not settings["chords"]
-    metronome = settings["metronome"]
+    metronome, plain = settings["metronome"], settings["plain"]
     faint_click = bass_only and bass == "drone" and not metronome
     click_level = (CLICK_LEVEL if metronome
                    else FAINT_CLICK_LEVEL if faint_click else 0.0)
@@ -566,14 +593,16 @@ def main():
         print(GUIDE + "\n")
         print("Rendering...", end="", flush=True)
         opening, variants, order = synth_session(tonic, beat_samples, bass,
-                                                 bass_only, click_level, choruses)
+                                                 bass_only, click_level, choruses,
+                                                 plain)
         render(wav_path, opening, variants, order,
-               synth_ending(tonic, beat_samples, bass, bass_only))
+               synth_ending(tonic, beat_samples, bass, bass_only, plain))
 
         print(f"\r12-bar blues in {NOTE_NAMES[tonic]} — {bpm:g} BPM, {choruses} chorus"
               + ("" if choruses == 1 else "es")
               + f", {length // 60}:{length % 60:02d}, {bass} bass"
               + (" on its own" if bass_only else "")
+              + (", plain" if plain else "")
               + (", metronome" if metronome else ", faint click" if faint_click else "")
               + ". Ctrl+C to stop.\n")
         print(progression_table() + "\n")
