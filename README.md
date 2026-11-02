@@ -1,5 +1,95 @@
 # ambient ear training
 
+## `cordelia` — drills that write down every answer
+
+The scripts below play; `cordelia` also records. A mode writes a *score*
+(what sounds when) and a *key* (what was asked, when, and the right answer),
+the renderer turns the score into one WAV, the collector plays it and logs
+every key you press with its time, the scorer matches presses to questions
+afterwards, and `stats` reads the record. Nothing reacts while the audio
+plays, and nothing on screen says whether you were right. Standard library
+only; the spoken answers come from macOS `say`.
+
+```sh
+cordelia                                           # 15 min, 60 BPM, major, in a random key
+cordelia --minutes 5                               # bare flags mean `degrees` too
+python3 -m cordelia degrees                        # the same, from the repo
+python3 -m cordelia degrees --minutes 20 --key A --scale natural-minor
+python3 -m cordelia degrees --voice Samantha       # any `say -v ?` voice
+python3 -m cordelia degrees --tag headphones       # sticky, like teepee; --tag none clears
+python3 -m cordelia degrees --render t.wav --midi t.mid   # just the files, nothing recorded
+python3 -m cordelia review                         # replay the last session's misses, with answers
+python3 -m cordelia review 12 --render r.wav
+python3 -m cordelia stats                          # by week, per degree, confusions, by register
+python3 -m cordelia stats --scale natural-minor --tag headphones --last 300
+python3 -m cordelia rescore                        # rebuild answers from the raw presses
+python3 -m cordelia tags | data
+```
+
+`~/.local/bin/cordelia` is a two-line wrapper that runs `python3 -m cordelia`
+from this checkout; `pip install -e .` does the same.
+
+### The `degrees` mode
+
+Over the breathing drone of `play_scale_drone.py`, with the note timbre of
+`play_ambient_drone.py` (four damped harmonics, softer as it rises), each question at
+60 BPM (a beat a second; `--bpm` changes it):
+
+```
+beats 1-2   the note           — press 1-7 (space to pass)
+beats 3-4   silence            — the answer window; the last key pressed in it counts
+beat  5     the voice says it  — "four", "flat seven"
+beats 6-7   the note again
+beat  8     rest
+```
+
+Without `--key`, every session draws a random key, never the one the last
+session was in. The key is the degree number whatever the scale: `3` means ♭3 in the
+minors, because the scale fixes it. Registers and weights are those of the
+original drill. Esc stops; everything before it is kept.
+
+### What is recorded
+
+`data/cordelia.db` in the checkout (gitignored; `CORDELIA_DATA_DIR`
+overrides it), plus `data/sessions/<id>.score.json` and `<id>.key.jsonl`
+per session; `--keep-wav` keeps the audio too.
+
+| table        | one row per | notes |
+|--------------|-------------|-------|
+| `sessions`   | session     | mode, config as JSON (key, scale, bpm, voice, the keymap, seed), tags, outcome (`completed` / `stopped` / `aborted`), ms into the audio when it ended |
+| `items`      | question    | truth as a keymap label, onset ms, window-end ms (when the answer starts sounding), meta JSON (degree, octave, register, MIDI note) |
+| `keystrokes` | key press   | ms since playback was started, key name (`4`, `space`, `other`...) |
+| `answers`    | question    | derived: answer, correct (NULL when nothing was pressed or you passed), latency from onset to the press that counted, presses in the window, late presses after it |
+
+The scorer is a pure function of items and presses (`cordelia/scorer.py`),
+and `rescore` reruns it over every session, so the rule can change later
+without losing anything. Timing caveat: `afplay` starts some tens of ms
+after it is spawned, so every latency carries the same small offset; fine
+for comparing degrees, not for absolute numbers.
+
+### Stats and review
+
+`stats` never shows a single session. Weeks need 100 questions and a
+degree needs 30 before a right% is printed (`MIN_WEEK`, `MIN_DEGREE` in
+`cordelia/stats.py`); until then the cell is a dash, because fifteen
+questions at even odds have a standard error of about 13 points. Filter by
+`--scale`, `--key` and `--tag` so that harder settings don't read as
+regression. `review` replays the questions a session got wrong or left
+unanswered, each as it sounded, answer included, and says only how long it
+is.
+
+### Adding a mode
+
+`cordelia/modes/degrees.py` is the whole of the mode: how questions are
+drawn, how one question is laid on the timeline (`Builder.phrase`), the
+keymap (key name → label), what the voice says for each label, and
+`build_review`. Everything else — rendering, collecting, scoring, storage,
+stats — is shared. A score is instrument-agnostic: `--midi` writes it as a
+Standard MIDI File (notes per instrument, the drone as one long note, the
+spoken labels as lyric events) for any soundfont; a voice bank is just a
+directory of `<label>.wav` under `data/voices/<name>/`, so a sung or
+sampled voice can replace the spoken one.
+
 Two ear-training drills and one ambient piece, all running in the
 terminal. Pure Python standard library — no dependencies, no install.
 Each one renders the whole session as a single WAV up front (a few

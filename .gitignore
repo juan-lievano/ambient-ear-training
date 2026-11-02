@@ -3,3 +3,5 @@ __pycache__/
 *.wav
 .DS_Store
 solfege_samples/
+data/
+*.egg-info/
