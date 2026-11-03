@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS keystrokes (
 CREATE TABLE IF NOT EXISTS answers (   -- derived from items + keystrokes; `rescore` rebuilds it
   session_id INTEGER NOT NULL,
   idx INTEGER NOT NULL,
-  answer TEXT,                         -- keymap label, 'pass', or NULL for no press
+  answer TEXT,                         -- keymap label, or NULL for no press ('pass' in sessions before 2026-11-03)
   correct INTEGER,                     -- 1/0, NULL when there was no answer
   latency_ms INTEGER,                  -- from the question's onset to the press that counted
   n_presses INTEGER NOT NULL,          -- mapped presses inside the window

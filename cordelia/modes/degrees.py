@@ -1,6 +1,7 @@
 """Scale degrees over a drone.
 
-Each question: the note sounds for two beats, two beats of silence to
+The session opens with the tonic, the fifth and the tonic an octave up, so
+the key is set in the ear before anything is asked. Each question: the note sounds for two beats, two beats of silence to
 answer in, then the voice says the degree, the note sounds again, and a
 beat of rest. The right answer is always given, nothing is ever judged out
 loud, and the register varies so that the degree, not the pitch, is what
@@ -11,6 +12,7 @@ import math
 import random
 
 from ..score import Clip, Note, Score
+from ..voice import VoiceBank
 
 NAME = "degrees"
 
@@ -41,11 +43,14 @@ NOTE_BEATS = 2
 PAUSE_BEATS = 2
 AGAIN_BEATS = 2
 REST_BEATS = 1
-INTRO_BEATS = 8
-OUTRO_SECONDS = 2.0
+INTRO_BEATS = 1                # the drone's fade-in, then the cadence, then the questions
+CADENCE = ((1, 0), (5, 0), (1, 1))   # (degree, octave): tonic, fifth, tonic an octave up
+CADENCE_BEATS = 1              # each cadence note
+CADENCE_REST_BEATS = 2         # after the last one, before the first question
+OUTRO_SECONDS = 2.0            # drone alone after the last answer, fading out
 RING = 0.25                    # a note rings this long past its beats
 
-DEFAULTS = dict(minutes=15.0, key=None, scale="major", bpm=60.0, voice="default")
+DEFAULTS = dict(minutes=2.0, key=None, scale="major", bpm=50.0, voice="default")
 MIN_BPM, MAX_BPM = 20, 240
 
 
@@ -69,10 +74,15 @@ def parse_scale(text):
     return name if name in SCALES else None
 
 
+# The digits, and the keys that sit under them on a layer, so one hand can
+# answer without the layer key: h , . n e i l stand in for 1-7.
+HOME_ROW = "h,.neil"
+
+
 def keymap(scale):
     labels = SCALES[scale]["labels"]
     km = {str(d): labels[d - 1] for d in range(1, 8)}
-    km["space"] = "pass"
+    km.update({HOME_ROW[d - 1]: labels[d - 1] for d in range(1, 8)})
     return km
 
 
@@ -84,6 +94,34 @@ def describe(config):
     return f"{NOTE_NAMES[parse_key(config['key'])]} {config['scale'].replace('-', ' ')}, {config['bpm']:g} BPM"
 
 
+def bank(config, data_dir):
+    """The spoken bank, with every degree the scale can ask for."""
+    b = VoiceBank(config.get("voice", "default"), data_dir)
+    b.ensure(spoken(config["scale"]))
+    return b
+
+
+def configure(a, last_config, rng):
+    """A session config from the parsed flags, or a SystemExit saying why not."""
+    pc = parse_key(a.key or random_key(rng, last_config and last_config.get("key")))
+    if pc is None:
+        raise SystemExit(f"--key {a.key!r} is not a note name")
+    scale = parse_scale(a.scale)
+    if scale is None:
+        raise SystemExit(f"--scale {a.scale!r}: choose from {', '.join(SCALES)}")
+    if a.minutes <= 0:
+        raise SystemExit("--minutes must be positive")
+    return dict(minutes=a.minutes, key=NOTE_NAMES[pc], scale=scale, bpm=a.bpm, voice=a.voice, keys=1)
+
+
+def hint(config):
+    return f"keys 1-7 (or {HOME_ROW}) answer, Esc stops."
+
+
+def status(current, n, typed, config):
+    return f"question {current}/{n}   [{typed[-1] if typed else ' '}]"
+
+
 class Builder:
     def __init__(self, config, bank):
         self.config = config
@@ -91,10 +129,10 @@ class Builder:
         self.beat = 60.0 / config["bpm"]
         self.scale = SCALES[config["scale"]]
         self.pc = parse_key(config["key"])
-        self.score = Score(drone={"midi": 24 + self.pc}, voice=bank.name)
+        self.score = Score(drone={"midi": 36 + self.pc}, voice=bank.name)
 
     def midi(self, degree, octave):
-        # middle register tonic is octave 4; the drone root is three octaves under it
+        # middle register tonic is octave 4; the drone root is two octaves under it
         return 60 + self.pc + self.scale["steps"][degree - 1] + 12 * octave
 
     def label(self, degree):
@@ -112,6 +150,15 @@ class Builder:
         again = voice_t + voice_beats * beat
         self.score.notes.append(Note(again, AGAIN_BEATS * beat + RING, midi, level))
         return voice_t, again + (AGAIN_BEATS + REST_BEATS) * beat
+
+    def cadence(self, t):
+        """Tonic, fifth, tonic an octave up, starting at t. Returns next_t."""
+        beat = self.beat
+        for degree, octave in CADENCE:
+            self.score.notes.append(Note(t, CADENCE_BEATS * beat + RING,
+                                         self.midi(degree, octave), OCTAVE_LEVELS[octave]))
+            t += CADENCE_BEATS * beat
+        return t + CADENCE_REST_BEATS * beat
 
     def max_phrase(self):
         longest = max(self.bank.seconds(l) for l in self.scale["labels"])
@@ -142,7 +189,7 @@ def build_session(config, bank, rng=None):
     rng = rng or random.Random()
     b = Builder(config, bank)
     limit = config["minutes"] * 60
-    t = INTRO_BEATS * b.beat
+    t = b.cadence(INTRO_BEATS * b.beat)
     count = max(1, int((limit - t) // b.max_phrase()))
     items = []
     for idx, (degree, octave) in enumerate(draw(rng, count)):
@@ -158,7 +205,7 @@ def build_session(config, bank, rng=None):
 def build_review(config, metas, bank):
     """The same phrase for each (degree, octave) in `metas`, nothing asked."""
     b = Builder(config, bank)
-    t = INTRO_BEATS * b.beat / 2
+    t = INTRO_BEATS * b.beat
     for m in metas:
         _, t = b.phrase(t, m["degree"], m["octave"])
     b.score.seconds = t + OUTRO_SECONDS

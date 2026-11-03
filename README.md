@@ -11,17 +11,20 @@ plays, and nothing on screen says whether you were right. Standard library
 only; the spoken answers come from macOS `say`.
 
 ```sh
-cordelia                                           # 15 min, 60 BPM, major, in a random key
+cordelia                                           # 2 min, 50 BPM, major, in a random key
 cordelia --minutes 5                               # bare flags mean `degrees` too
 python3 -m cordelia degrees                        # the same, from the repo
 python3 -m cordelia degrees --minutes 20 --key A --scale natural-minor
 python3 -m cordelia degrees --voice Samantha       # any `say -v ?` voice
 python3 -m cordelia degrees --tag headphones       # sticky, like teepee; --tag none clears
-python3 -m cordelia degrees --render t.wav --midi t.mid   # just the files, nothing recorded
+python3 -m cordelia degrees --midi t.mid           # also write the score as MIDI
+python3 -m cordelia melody                         # 5 min, 55 BPM, four-note melodies on 1 2 3, sung back
+python3 -m cordelia melody 2 --key G --singer chengu    # level 2
 python3 -m cordelia review                         # replay the last session's misses, with answers
 python3 -m cordelia review 12 --render r.wav
-python3 -m cordelia stats                          # by week, per degree, confusions, by register
+python3 -m cordelia stats                          # every mode: by week, per degree/level, confusions
 python3 -m cordelia stats --scale natural-minor --tag headphones --last 300
+python3 -m cordelia stats --mode melody            # one mode only
 python3 -m cordelia rescore                        # rebuild answers from the raw presses
 python3 -m cordelia tags | data
 ```
@@ -31,12 +34,16 @@ from this checkout; `pip install -e .` does the same.
 
 ### The `degrees` mode
 
-Over the breathing drone of `play_scale_drone.py`, with the note timbre of
-`play_ambient_drone.py` (four damped harmonics, softer as it rises), each question at
-60 BPM (a beat a second; `--bpm` changes it):
+Over a breathing drone in the style of `play_scale_drone.py`, rooted two
+octaves under the middle-register tonic (C2 for C), its core steady and its
+fifths and shimmer above swelling in and out over several seconds, with
+the note timbre of `play_ambient_drone.py` (four damped harmonics, softer as
+it rises). The drone fades in for a beat, then tonic, fifth and tonic an
+octave up (a beat each) set the key, and after two beats of rest the
+questions start, each at 50 BPM (1.2 s a beat; `--bpm` changes it):
 
 ```
-beats 1-2   the note           — press 1-7 (space to pass)
+beats 1-2   the note           — press 1-7, or h , . n e i l
 beats 3-4   silence            — the answer window; the last key pressed in it counts
 beat  5     the voice says it  — "four", "flat seven"
 beats 6-7   the note again
@@ -47,6 +54,46 @@ Without `--key`, every session draws a random key, never the one the last
 session was in. The key is the degree number whatever the scale: `3` means ♭3 in the
 minors, because the scale fixes it. Registers and weights are those of the
 original drill. Esc stops; everything before it is kept.
+
+### The `melody` mode
+
+The same drone, with the major scale sung up to the octave over I, V, I,
+IV, I, IV, V, I to set the key (a beat a step, the last held). Then each
+question is one melody of quarter notes, drawn at random within its level:
+
+```
+beats 1-4     the melody
+beats 5-8     a click a beat
+beats 9-12    the melody again
+beats 13-16   clicks
+beats 17-20   the melody once more
+beats 21-24   clicks, to think
+beats 25-28   the answer, sung a note a beat   — "do re mi do", on the melody's own pitches
+beats 29-30   rest
+```
+
+At the default 55 BPM a beat is 1.09 s (`--bpm` changes it).
+
+Type the degrees as you make them out, one key per note (1-8, or the home
+row for 1-7; 8 is the tonic above); backspace takes one back. The last
+four typed before the singing starts are the answer, stored as `1 2 3 1`,
+so a note can be right on its own in the stats. The singing comes from the
+solfege samples in `solfege_samples/` (fixed-do, one syllable per
+semitone): each note is the singer's nearest sample of that syllable,
+pitched to the note by resampling. The shift is the key's distance from C
+and a voice sped up six semitones is a cartoon, so a random key stays
+within three of C (A, Bb, B, C, C#, D, Eb); `--key` allows any. The melody
+sits in the octave nearest middle C whatever the key. `--singer`
+picks `jennifer` (default) or `chengu`; the sung clips are made once per
+note under `data/voices/sung-<singer>/`.
+
+Levels are rows of `LEVELS` in `cordelia/modes/melody.py`: which degrees a
+melody may use, how many notes, how far it may leap, and what share of the
+moves go to an adjacent degree (the rest go anywhere else allowed, a repeat
+included; the first note is uniform). Level 1 is four notes on 1 2 3, any
+move. Level 2 is 1 to 5 with half the moves stepwise (`cordelia melody 2`). A new
+level is a new row; the session records its level with every question,
+and the stats read across levels.
 
 ### What is recorded
 
@@ -59,7 +106,7 @@ per session; `--keep-wav` keeps the audio too.
 | `sessions`   | session     | mode, config as JSON (key, scale, bpm, voice, the keymap, seed), tags, outcome (`completed` / `stopped` / `aborted`), ms into the audio when it ended |
 | `items`      | question    | truth as a keymap label, onset ms, window-end ms (when the answer starts sounding), meta JSON (degree, octave, register, MIDI note) |
 | `keystrokes` | key press   | ms since playback was started, key name (`4`, `space`, `other`...) |
-| `answers`    | question    | derived: answer, correct (NULL when nothing was pressed or you passed), latency from onset to the press that counted, presses in the window, late presses after it |
+| `answers`    | question    | derived: answer, correct (NULL when nothing was pressed), latency from onset to the press that counted, presses in the window, late presses after it |
 
 The scorer is a pure function of items and presses (`cordelia/scorer.py`),
 and `rescore` reruns it over every session, so the rule can change later
@@ -74,7 +121,12 @@ degree needs 30 before a right% is printed (`MIN_WEEK`, `MIN_DEGREE` in
 `cordelia/stats.py`); until then the cell is a dash, because fifteen
 questions at even odds have a standard error of about 13 points. Filter by
 `--scale`, `--key` and `--tag` so that harder settings don't read as
-regression. `review` replays the questions a session got wrong or left
+regression. Bare `stats` opens with the one view across drills (sessions,
+questions and minutes by week and mode), then gives each mode its own
+report; `--mode degrees` or `--mode melody` gives one. The degrees
+confusion matrix never counts a melody, and the melody tables (per level,
+per position in the melody, per degree note by note) never count a
+degrees drill. `review` replays the questions a session got wrong or left
 unanswered, each as it sounded, answer included, and says only how long it
 is.
 
@@ -82,9 +134,12 @@ is.
 
 `cordelia/modes/degrees.py` is the whole of the mode: how questions are
 drawn, how one question is laid on the timeline (`Builder.phrase`), the
-keymap (key name → label), what the voice says for each label, and
-`build_review`. Everything else — rendering, collecting, scoring, storage,
-stats — is shared. A score is instrument-agnostic: `--midi` writes it as a
+keymap (key name → label), `configure` (flags → config, with `keys`: how
+many presses make an answer), `bank` (the voice it answers with), `hint`
+and `status` (the two lines the terminal shows), `describe`, and
+`build_review`; `cordelia/modes/melody.py` is the second one, with its
+stats section in `cordelia/stats.py`. Everything else — rendering,
+collecting, scoring, storage — is shared. A score is instrument-agnostic: `--midi` writes it as a
 Standard MIDI File (notes per instrument, the drone as one long note, the
 spoken labels as lyric events) for any soundfont; a voice bank is just a
 directory of `<label>.wav` under `data/voices/<name>/`, so a sung or

@@ -10,7 +10,6 @@ from . import store
 from .collector import collect
 from .modes import MODES
 from .synth import render
-from .voice import VoiceBank
 
 
 def missed(con, sid):
@@ -18,7 +17,7 @@ def missed(con, sid):
              LEFT JOIN answers a ON a.session_id = i.session_id AND a.idx = i.idx
              JOIN sessions s ON s.id = i.session_id
              WHERE i.session_id = ? AND coalesce(a.correct, 0) = 0
-               AND i.ask_ms < coalesce(s.stopped_at_ms, 1 << 62)
+               AND i.window_end_ms <= coalesce(s.stopped_at_ms, 1 << 62)
              ORDER BY i.idx"""
     import json
     return [json.loads(meta) for _, _, meta in con.execute(sql, (sid,))]
@@ -37,8 +36,7 @@ def run(sid=None, render_to=None, midi=None):
     if not metas:
         print(f"session {sid}: nothing to review")
         return
-    bank = VoiceBank(sess["config"].get("voice", "default"), store.data_dir())
-    bank.ensure(mode.spoken(sess["config"]["scale"]))
+    bank = mode.bank(sess["config"], store.data_dir())
     score = mode.build_review(sess["config"], metas, bank)
     if midi:
         score.to_midi(midi)

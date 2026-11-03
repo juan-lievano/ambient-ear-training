@@ -1,3 +1,3 @@
-from . import degrees
+from . import degrees, melody
 
-MODES = {degrees.NAME: degrees}
+MODES = {degrees.NAME: degrees, melody.NAME: melody}

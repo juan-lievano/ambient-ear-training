@@ -2,7 +2,8 @@
 
 The collector knows nothing about modes or right answers. It gets the
 question onsets only so it can show which question is sounding, and it
-echoes the key you pressed so you know it registered. It never judges.
+hands the status line the keys pressed since it began, so you can see they
+registered. It never judges.
 """
 
 import select
@@ -38,7 +39,7 @@ def collect(wav_path, ask_ms, status=None):
         return (time.monotonic_ns() - t0) // 1_000_000
 
     shown = -1
-    last_key = ""
+    typed = []
     dirty = True
     try:
         tty.setcbreak(fd)
@@ -49,12 +50,12 @@ def collect(wav_path, ask_ms, status=None):
             t = now_ms()
             current = sum(1 for a in ask_ms if a <= t)
             if current != shown:
-                last_key, dirty = "", True          # a new question: the echoed key resets
+                typed, dirty = [], True             # a new question: the echoed keys reset
             if dirty:
                 shown, dirty = current, False
                 line = f"question {current}/{len(ask_ms)}"
                 if status:
-                    line = status(current, len(ask_ms), last_key)
+                    line = status(current, len(ask_ms), typed)
                 sys.stdout.write("\r\x1b[K" + line)
                 sys.stdout.flush()
             ready, _, _ = select.select([sys.stdin], [], [], 0.05)
@@ -66,7 +67,8 @@ def collect(wav_path, ask_ms, status=None):
                 outcome = "stopped"
                 break
             keystrokes.append((t, key))
-            last_key, dirty = key, True
+            typed.append(key)
+            dirty = True
     except KeyboardInterrupt:
         outcome = "stopped"
     finally:
