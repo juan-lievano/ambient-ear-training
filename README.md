@@ -80,10 +80,11 @@ four typed before the singing starts are the answer, stored as `1 2 3 1`,
 so a note can be right on its own in the stats. The singing comes from the
 solfege samples in `solfege_samples/` (fixed-do, one syllable per
 semitone): each note is the singer's nearest sample of that syllable,
-pitched to the note by resampling. The shift is the key's distance from C
-and a voice sped up six semitones is a cartoon, so a random key stays
-within three of C (A, Bb, B, C, C#, D, Eb); `--key` allows any. The melody
-sits in the octave nearest middle C whatever the key. `--singer`
+pitched to the note by TD-PSOLA (`cordelia/psola.py`), which moves the
+pitch and leaves the singer's speed and vowel alone, so any key sounds
+like her. The shift is the key's distance from C, six semitones at most,
+and the melody sits in the octave nearest middle C whatever the key.
+`--singer`
 picks `jennifer` (default) or `chengu`; the sung clips are made once per
 note under `data/voices/sung-<singer>/`.
 

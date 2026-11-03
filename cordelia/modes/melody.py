@@ -18,7 +18,7 @@ import random
 
 from ..score import Clip, Note, Score
 from ..voice import SungBank, sung_label
-from .degrees import HOME_ROW, NOTE_NAMES, SCALES, parse_key, parse_scale
+from .degrees import HOME_ROW, NOTE_NAMES, SCALES, parse_key, parse_scale, random_key  # noqa: F401
 
 NAME = "melody"
 
@@ -62,18 +62,6 @@ CADENCE = {"major": ("I", "V", "I", "IV", "I", "IV", "V", "I")}
 CADENCE_LAST_BEATS = 2
 
 DEFAULTS = dict(minutes=5.0, key=None, scale="major", bpm=55.0, level=1, singer="jennifer")
-
-# The samples are fixed-do, so a sung note is the singer's sample pitched
-# by the key's distance from C: in F# every syllable is six semitones off,
-# and sped up that far the voice is a cartoon. A random key stays within
-# three semitones of C, under 19% faster or slower; --key allows any.
-MAX_KEY_SHIFT = 3
-SUNG_KEYS = [k for k in NOTE_NAMES if min(parse_key(k), 12 - parse_key(k)) <= MAX_KEY_SHIFT]
-
-
-def random_key(rng, avoid=None):
-    """A key the singer can carry, never the one the last session was in."""
-    return rng.choice([k for k in SUNG_KEYS if k != avoid])
 
 
 def keymap(scale):

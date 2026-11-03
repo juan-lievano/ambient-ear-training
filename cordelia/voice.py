@@ -4,7 +4,8 @@ A bank is a directory of `<label>.wav` at the renderer's sample rate. The
 spoken bank makes its files with macOS `say` ("four", "flat seven"). The
 sung bank makes its files from the solfege samples in solfege_samples/,
 one syllable pitched to one MIDI note per label ("mi@64"), so a melody's
-answer can be sung back in the key it was asked in.
+answer can be sung back in the key it was asked in. The pitching keeps the
+singer's speed and vowel (see psola.py).
 """
 
 import array
@@ -13,6 +14,7 @@ import subprocess
 import wave
 from pathlib import Path
 
+from . import psola
 from .synth import SAMPLE_RATE
 
 
@@ -96,7 +98,7 @@ def sung_label(label, midi):
 
 class SungBank(VoiceBank):
     """Labels are `<syllable>@<midi>`; each file is the singer's nearest
-    sample of that syllable, pitched to the note by plain resampling."""
+    sample of that syllable, pitched to the note with its timbre kept."""
 
     def __init__(self, singer, data_dir):
         if singer not in SINGERS:
@@ -142,17 +144,13 @@ class SungBank(VoiceBank):
                 raise SystemExit(f"{path}: need 16-bit mono at {SOURCE_RATE} Hz")
             src = array.array("h")
             src.frombytes(w.readframes(w.getnframes()))
-        # read the source faster to raise it, slower to lower it, and at
-        # twice the rate again for the renderer's sample rate
-        step = SOURCE_RATE / SAMPLE_RATE * 2.0 ** ((midi - source) / 12.0)
-        n = int((len(src) - 1) / step)
-        pcm = []
-        for i in range(n):
-            x = i * step
-            j = int(x)
-            frac = x - j
-            pcm.append(src[j] * (1.0 - frac) + src[j + 1] * frac)
-        peak = max(1.0, max(abs(v) for v in pcm))
+        shifted = psola.shift([v / 32768.0 for v in src], midi - source, SOURCE_RATE)
+        # halve the rate for the renderer, through a small triangle filter
+        # so what lies above the new Nyquist does not fold down
+        assert SOURCE_RATE == 2 * SAMPLE_RATE
+        pcm = [0.25 * shifted[2 * i - 1] + 0.5 * shifted[2 * i] + 0.25 * shifted[2 * i + 1]
+               for i in range(1, len(shifted) // 2 - 1)]
+        peak = max(1e-9, max(abs(v) for v in pcm))
         start = next((i for i, v in enumerate(pcm) if abs(v) > GATE * peak), 0)
         scale = 0.9 * 32767 / peak
         pcm = array.array("h", (int(v * scale) for v in pcm[start:]))
